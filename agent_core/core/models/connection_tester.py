@@ -54,6 +54,9 @@ def test_provider_connection(
         elif provider == "grok":
             url = cfg.default_base_url
             return _test_grok(api_key, url, timeout)
+        elif provider == "openrouter":
+            url = base_url or cfg.default_base_url
+            return _test_openrouter(api_key, url, timeout)
         elif provider in ("minimax", "deepseek", "moonshot"):
             url = cfg.default_base_url
             return _test_openai_compat(provider, api_key, url, timeout)
@@ -397,6 +400,78 @@ def _test_openai_compat(
         return {"success": False, "message": "Connection timed out", "provider": provider, "error": "Request timed out - check your network connection"}
     except httpx.RequestError as e:
         return {"success": False, "message": "Network error", "provider": provider, "error": str(e)}
+
+
+def _test_openrouter(
+    api_key: Optional[str], base_url: str, timeout: float
+) -> Dict[str, Any]:
+    """Test OpenRouter API connection.
+
+    Uses /api/v1/auth/key (auth-required) so we both validate the key and
+    surface the user's credit balance in the success message — that's the
+    information OpenRouter users care about most.
+    """
+    if not api_key:
+        return {
+            "success": False,
+            "message": "API key is required for OpenRouter",
+            "provider": "openrouter",
+            "error": "Missing API key",
+        }
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(
+                f"{base_url.rstrip('/')}/auth/key",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+
+        if response.status_code == 200:
+            data = response.json().get("data", {}) or {}
+            limit = data.get("limit")
+            usage = data.get("usage")
+            label = data.get("label") or "OpenRouter key"
+            if limit is None:
+                msg = f"Connected to OpenRouter ({label}) — unlimited credits"
+            else:
+                remaining = max(0.0, float(limit) - float(usage or 0.0))
+                msg = (
+                    f"Connected to OpenRouter ({label}) — "
+                    f"${remaining:.2f} of ${float(limit):.2f} remaining"
+                )
+            return {
+                "success": True,
+                "message": msg,
+                "provider": "openrouter",
+            }
+        elif response.status_code in (401, 403):
+            return {
+                "success": False,
+                "message": "Invalid API key",
+                "provider": "openrouter",
+                "error": "Authentication failed - check your OpenRouter API key",
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"API returned status {response.status_code}",
+                "provider": "openrouter",
+                "error": response.text[:300] if response.text else "Unknown error",
+            }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": "Connection timed out",
+            "provider": "openrouter",
+            "error": "Request timed out - check your network connection",
+        }
+    except httpx.RequestError as e:
+        return {
+            "success": False,
+            "message": "Network error",
+            "provider": "openrouter",
+            "error": str(e),
+        }
 
 
 def _test_grok(api_key: Optional[str], base_url: str, timeout: float) -> Dict[str, Any]:

@@ -367,7 +367,7 @@ class LLMInterface:
             logger.info(f"[LLM SEND] system={system_prompt} | user={user_prompt}")
 
         try:
-            if self.provider in ("openai", "minimax", "deepseek", "moonshot", "grok"):
+            if self.provider in ("openai", "minimax", "deepseek", "moonshot", "grok", "openrouter"):
                 response = self._generate_openai(system_prompt, user_prompt)
             elif self.provider == "remote":
                 response = self._generate_ollama(system_prompt, user_prompt)
@@ -502,7 +502,7 @@ class LLMInterface:
         supports_caching = (
             (self.provider == "byteplus" and self._byteplus_cache_manager) or
             (self.provider == "gemini" and self._gemini_cache_manager) or
-            (self.provider in ("openai", "deepseek", "grok") and self.client) or  # OpenAI/DeepSeek/Grok use automatic caching with prompt_cache_key
+            (self.provider in ("openai", "deepseek", "grok", "openrouter") and self.client) or  # OpenAI/DeepSeek/Grok/OpenRouter use automatic caching with prompt_cache_key (and cache_control for Anthropic-routed OpenRouter models)
             (self.provider == "anthropic" and self._anthropic_client)  # Anthropic uses ephemeral caching with extended TTL
         )
 
@@ -605,7 +605,7 @@ class LLMInterface:
                 return True
             if self.provider == "gemini" and self._gemini_cache_manager:
                 return True
-            if self.provider in ("openai", "deepseek", "grok") and self.client:
+            if self.provider in ("openai", "deepseek", "grok", "openrouter") and self.client:
                 return True
             if self.provider == "anthropic" and self._anthropic_client:
                 return True
@@ -687,8 +687,8 @@ class LLMInterface:
                 logger.info(f"[LLM RECV] {cleaned}")
             return cleaned
 
-        # Handle OpenAI/DeepSeek/Grok with call_type-based cache routing
-        if self.provider in ("openai", "deepseek", "grok"):
+        # Handle OpenAI/DeepSeek/Grok/OpenRouter with call_type-based cache routing
+        if self.provider in ("openai", "deepseek", "grok", "openrouter"):
             # Get stored system prompt or use provided one
             session_key = f"{task_id}:{call_type}"
             stored_system_prompt = self._session_system_prompts.get(session_key)
@@ -1184,14 +1184,45 @@ class LLMInterface:
             # Always enforce JSON output format
             request_kwargs["response_format"] = {"type": "json_object"}
 
-            # Add prompt_cache_key for OpenAI/DeepSeek cache routing.
-            # Grok (xAI) does not support prompt_cache_key — it uses automatic
-            # prefix caching and ignores this parameter, so skip it for Grok.
-            if self.provider != "grok" and call_type and system_prompt and len(system_prompt) >= config.min_cache_tokens:
+            # Build provider-specific cache hints in extra_body.
+            # - prompt_cache_key (OpenAI/DeepSeek/OpenRouter): improves prefix-cache routing
+            #   stickiness across alternating call types. Grok ignores it; we skip there
+            #   to avoid noise.
+            # - cache_control (OpenRouter routing to Anthropic Claude only): Anthropic
+            #   prompt caching is opt-in. OpenRouter accepts a top-level cache_control
+            #   field and applies it to the last cacheable block automatically. For
+            #   OpenAI/DeepSeek/Gemini upstreams via OpenRouter, caching is automatic
+            #   on the upstream side, so cache_control would be ignored — we only set
+            #   it when the slug is Anthropic-routed.
+            extra_body: Dict[str, Any] = {}
+
+            long_enough = system_prompt and len(system_prompt) >= config.min_cache_tokens
+
+            if self.provider != "grok" and call_type and long_enough:
                 prompt_hash = hashlib.sha256(system_prompt.encode()).hexdigest()[:16]
                 cache_key = f"{call_type}_{prompt_hash}"
-                request_kwargs["extra_body"] = {"prompt_cache_key": cache_key}
+                extra_body["prompt_cache_key"] = cache_key
                 logger.debug(f"[OPENAI] Using prompt_cache_key: {cache_key}")
+
+            if self.provider == "openrouter" and long_enough:
+                model_lower_for_cache = (self.model or "").lower()
+                # OpenRouter slugs are "<provider>/<model>". Anthropic Claude routes
+                # are the only ones requiring opt-in cache_control. Detect by either
+                # the slug prefix or the "claude" substring (some aliases like
+                # "anthropic/claude-3.5-sonnet:beta" still match).
+                if model_lower_for_cache.startswith("anthropic/") or "claude" in model_lower_for_cache:
+                    cache_control: Dict[str, Any] = {"type": "ephemeral"}
+                    if call_type:
+                        # 1-hour TTL keeps caches alive across alternating call types
+                        # (mirrors the Anthropic-direct path).
+                        cache_control["ttl"] = "1h"
+                    extra_body["cache_control"] = cache_control
+                    logger.debug(
+                        f"[OPENROUTER] Anthropic cache_control: {cache_control} (model={self.model})"
+                    )
+
+            if extra_body:
+                request_kwargs["extra_body"] = extra_body
 
             response = self.client.chat.completions.create(**request_kwargs)
             content = response.choices[0].message.content.strip()
@@ -1235,9 +1266,11 @@ class LLMInterface:
             token_count_output,
         )
 
-        # Report usage
+        # Report usage. service_type stays "llm_openai" (the request shape) but
+        # provider attributes to the actual upstream so dashboards split out
+        # OpenRouter / DeepSeek / Grok separately.
         self._report_usage_async(
-            "llm_openai", "openai", self.model,
+            "llm_openai", self.provider, self.model,
             token_count_input, token_count_output, cached_tokens
         )
 
