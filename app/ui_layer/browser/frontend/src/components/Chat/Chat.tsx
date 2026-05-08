@@ -147,6 +147,7 @@ export function Chat({ livingUIId, placeholder, emptyMessage }: ChatProps) {
   const wasNearBottomRef = useRef(true)
   const prevMessageCountRef = useRef(0)
   const hasInitialScrolled = useRef(false)
+  const prevScrollTopRef = useRef(0)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
 
   const attachmentValidation = useMemo(() => {
@@ -196,15 +197,33 @@ export function Chat({ livingUIId, placeholder, emptyMessage }: ChatProps) {
     return () => document.removeEventListener('keydown', handler)
   }, [previewAttachment])
 
-  // Track scroll position + load older messages on scroll-to-top
+  // Track scroll position + direction, and load older messages on scroll-to-top.
+  // The scroll-to-bottom button surfaces when the user is scrolling *toward*
+  // the bottom but hasn't arrived yet — scrolling up to read history hides it.
   useEffect(() => {
     const container = parentRef.current
     if (!container) return
+    prevScrollTopRef.current = container.scrollTop
     const handleScroll = () => {
-      const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-      wasNearBottomRef.current = distFromBottom < 100
-      setShowScrollToBottom(distFromBottom > 100)
-      if (container.scrollTop < 100 && hasMoreMessages && !loadingOlderMessages) {
+      const scrollTop = container.scrollTop
+      const distFromBottom = container.scrollHeight - scrollTop - container.clientHeight
+      const nearBottom = distFromBottom < 100
+      wasNearBottomRef.current = nearBottom
+
+      const delta = scrollTop - prevScrollTopRef.current
+      prevScrollTopRef.current = scrollTop
+
+      if (nearBottom) {
+        setShowScrollToBottom(false)
+      } else if (delta > 0) {
+        // Scrolling down (toward latest) — offer a quick jump.
+        setShowScrollToBottom(true)
+      } else if (delta < 0) {
+        // Scrolling up (reading history) — get out of the way.
+        setShowScrollToBottom(false)
+      }
+
+      if (scrollTop < 100 && hasMoreMessages && !loadingOlderMessages) {
         loadOlderMessages()
       }
     }
@@ -215,6 +234,7 @@ export function Chat({ livingUIId, placeholder, emptyMessage }: ChatProps) {
   const scrollToBottom = useCallback(() => {
     if (orderedMessages.length === 0) return
     virtualizer.scrollToIndex(orderedMessages.length - 1, { align: 'end', behavior: 'smooth' })
+    setShowScrollToBottom(false)
   }, [virtualizer, orderedMessages.length])
 
   // Scroll to unread on mount, auto-scroll on new messages if near bottom
