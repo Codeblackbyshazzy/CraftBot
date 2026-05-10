@@ -1411,12 +1411,13 @@ class AgentBase:
     # ----- Agent Limits -----
 
     async def _check_agent_limits(self) -> bool:
-        agent_properties = STATE.get_agent_properties()
+        from app.state.agent_state import get_session_props
+        current_task_id: str = STATE.get_agent_property("current_task_id", "")
+        agent_properties = get_session_props(current_task_id).to_dict()
         action_count: int = agent_properties.get("action_count", 0)
         max_actions: int = agent_properties.get("max_actions_per_task", 0)
         token_count: int = agent_properties.get("token_count", 0)
         max_tokens: int = agent_properties.get("max_tokens_per_task", 0)
-        current_task_id: str = agent_properties.get("current_task_id", "")
 
         # Check action limits
         if (action_count / max_actions) >= 1.0:
@@ -1582,13 +1583,9 @@ class AgentBase:
             logger.warning(f"[LIMIT] Task {session_id} not found for limit continue")
             return
 
-        # Reset counters
-        STATE.set_agent_property("action_count", 0)
-        STATE.set_agent_property("token_count", 0)
-
-        # Also reset on the StateSession for this session
+        # Reset per-task counters on this session's StateSession.
         from agent_core.core.state.session import StateSession
-        session = StateSession.get(session_id)
+        session = StateSession.get_or_none(session_id)
         if session:
             session.agent_properties.set_property("action_count", 0)
             session.agent_properties.set_property("token_count", 0)
