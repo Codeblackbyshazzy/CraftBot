@@ -2,9 +2,10 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import type {
   ChatMessage, ActionItem, AgentStatus, InitialState, WSMessage, DashboardMetrics,
   TaskCancelResponse, FilteredDashboardMetrics, MetricsTimePeriod, OnboardingStep,
-  OnboardingStepResponse, OnboardingSubmitResponse, OnboardingCompleteResponse, 
-  LocalLLMState, LocalLLMCheckResponse, LocalLLMTestResponse, LocalLLMInstallResponse, 
+  OnboardingStepResponse, OnboardingSubmitResponse, OnboardingCompleteResponse,
+  LocalLLMState, LocalLLMCheckResponse, LocalLLMTestResponse, LocalLLMInstallResponse,
   LocalLLMProgressResponse, LocalLLMPullProgressResponse, SuggestedModel,
+  SkillMeta,
   // Living UI types
   LivingUIProject, LivingUICreateRequest, LivingUIStatusUpdate, LivingUIStateUpdate,
   LivingUITodo, LivingUITodosUpdate,
@@ -83,6 +84,7 @@ interface WebSocketState {
   livingUITodos: Record<string, LivingUITodo[]>
   activeLivingUIId: string | null
   livingUIStates: Record<string, LivingUIStateUpdate['state']>
+  skillMeta: SkillMeta
 }
 
 interface WebSocketContextType extends WebSocketState {
@@ -195,6 +197,11 @@ const defaultState: WebSocketState = {
   livingUITodos: {},
   activeLivingUIId: null,
   livingUIStates: {},
+  skillMeta: {
+    internalWorkflowIds: [],
+    internalSkillNames: [],
+    reservedSkillNames: [],
+  },
 }
 
 const WebSocketContext = createContext<WebSocketContextType | undefined>(undefined)
@@ -351,6 +358,19 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
             || false,
           hasMoreMessages: initMessages.length >= 50,
           hasMoreActions: initActions.filter((a: ActionItem) => a.itemType === 'task').length >= 15,
+        }))
+        break
+      }
+
+      case 'skill_meta': {
+        const data = msg.data as unknown as SkillMeta
+        setState(prev => ({
+          ...prev,
+          skillMeta: {
+            internalWorkflowIds: data.internalWorkflowIds || [],
+            internalSkillNames: data.internalSkillNames || [],
+            reservedSkillNames: data.reservedSkillNames || [],
+          },
         }))
         break
       }
@@ -1018,26 +1038,19 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   ) => {
     const clientId = newClientId()
 
-    // Slash commands are handled by the controller's command executor and
-    // never produce a user chat bubble — skip the optimistic insert so a
-    // "pending" bubble doesn't linger when the server has nothing to echo.
-    const isSlashCommand = content.trimStart().startsWith('/')
-
-    if (!isSlashCommand) {
-      // Optimistic insert: show the user's bubble immediately at reduced opacity.
-      // The server echo (case 'chat_message') will replace this entry in place by
-      // matching on clientId, flipping `pending` -> false.
-      const optimistic: ChatMessage = {
-        sender: 'You',
-        content,
-        style: 'user',
-        timestamp: Date.now() / 1000,
-        messageId: `pending:${clientId}`,
-        clientId,
-        pending: true,
-      }
-      setState(prev => ({ ...prev, messages: [...prev.messages, optimistic] }))
+    // Optimistic insert: show the user's bubble immediately at reduced opacity.
+    // The server echo (case 'chat_message') will replace this entry in place by
+    // matching on clientId, flipping `pending` -> false.
+    const optimistic: ChatMessage = {
+      sender: 'You',
+      content,
+      style: 'user',
+      timestamp: Date.now() / 1000,
+      messageId: `pending:${clientId}`,
+      clientId,
+      pending: true,
     }
+    setState(prev => ({ ...prev, messages: [...prev.messages, optimistic] }))
 
     sendOrQueue(JSON.stringify({
       type: 'message',
@@ -1050,10 +1063,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   }, [sendOrQueue])
 
   const sendCommand = useCallback((command: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'command', command }))
-    }
-  }, [])
+    sendOrQueue(JSON.stringify({ type: 'command', command }))
+  }, [sendOrQueue])
 
   const clearMessages = useCallback(() => {
     setState(prev => ({ ...prev, messages: [] }))
