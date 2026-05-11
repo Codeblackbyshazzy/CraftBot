@@ -718,21 +718,6 @@ You're blocked when you don't know what to do next AND retrying won't help. The 
 - **Asking open-ended "what should I do" questions.** Always one specific question with an implied default ("Use the bot token from settings.oauth.slack, or reuse the existing /slack login session?").
 - **Self-detected logical loops.** The consecutive-failure breaker only catches LLM-call failures. If you keep choosing slightly different params for the same action and getting the same business-logic error (e.g., "user not found" three times with three different IDs you guessed), that is a logical loop. Stop and ask the user.
 
-### Errors observed in past self-edits of this file (do not repeat)
-
-When you edit AGENT.md, USER.md, SOUL.md, FORMAT.md, or any other file an LLM (you, future-you) will consume, the consumer is a token-counting reader, not a human eye. These mistakes have happened before and are easy to repeat:
-
-- **Generating output formatted for human readers.** ASCII art (boxes with `┌─┐│└─┘`, arrow trees with `│ ▼`), decorative tables for prose content, em-dash flourishes, marketing intros ("This file is your instruction manual..."), and rhetorical paragraphs are noise to a token-counting reader. Use plain bulleted structure, code blocks for schemas/formats, and direct imperative rules.
-- **Numbered cross-references like `§4`, `§15`, `§22`.** They rot the moment a section is reordered or inserted. Use topic-anchored references: `see ## Tasks`, `see ## Configs`. The header becomes the stable anchor.
-- **Repeating the same warning across multiple sections.** Saying "DO NOT edit MEMORY.md" three times burns tokens without adding meaning. State it once where it belongs (`## File System` or `## Memory`) and reference it elsewhere.
-- **Documenting features that do not exist in the codebase.** Verify by reading source before describing behavior. Examples of fabrication that occurred: an "org chart" section, action parameters that the action did not accept, slash subcommands that were never registered.
-- **Decorative tables for non-tabular content.** Tables make sense for `key | value` mappings (config schemas, command lists). They make NO sense for "rules" or "guidelines" — those should be bullets the LLM can grep with `-A` context.
-- **Confusing length with comprehensiveness.** A 1300-line file the agent cannot navigate is less useful than a 700-line file with stable anchors and tight sections. Comprehensive means "covers what's needed", not "long".
-- **Confusing brevity with clarity.** Inverse of the above. A 10-line section that omits the actual mechanism (what triggers, what payloads, what error states, what the harness does for you) leaves the agent guessing. Detail every mechanism the agent will encounter.
-- **Writing prose where rules would do.** "Use this when X is true, but consider Y..." is harder to act on than "if X: do A. else: do B."
-
-The pattern under all of these: the consumer of this file is an LLM. Optimize for grep, structure, and unambiguous rules. Optimize against token waste and decorative noise.
-
 ### What the harness does NOT do for you
 
 - It does NOT change your approach when an action fails. You must.

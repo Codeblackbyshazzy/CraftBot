@@ -1474,7 +1474,8 @@ A quick Q&A will now begin to understand your objectives to serve you better:"""
             provider = data.get("provider", "")
             api_key = data.get("apiKey")
             base_url = data.get("baseUrl")
-            await self._handle_model_connection_test(provider, api_key, base_url)
+            model = data.get("model")
+            await self._handle_model_connection_test(provider, api_key, base_url, model)
 
         elif msg_type == "model_validate_save":
             await self._handle_model_validate_save(data)
@@ -1482,6 +1483,18 @@ A quick Q&A will now begin to understand your objectives to serve you better:"""
         elif msg_type == "ollama_models_get":
             base_url = data.get("baseUrl")
             await self._handle_ollama_models_get(base_url)
+
+        elif msg_type == "openrouter_models_get":
+            await self._handle_openrouter_models_get(
+                base_url=data.get("baseUrl"),
+                force_refresh=bool(data.get("forceRefresh", False)),
+            )
+
+        elif msg_type == "openrouter_credits_get":
+            await self._handle_openrouter_credits_get(
+                api_key=data.get("apiKey"),
+                base_url=data.get("baseUrl"),
+            )
 
         elif msg_type == "slow_mode_get":
             await self._handle_slow_mode_get()
@@ -4164,6 +4177,7 @@ A quick Q&A will now begin to understand your objectives to serve you better:"""
         provider: str,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> None:
         """Test connection to a model provider."""
         try:
@@ -4171,6 +4185,7 @@ A quick Q&A will now begin to understand your objectives to serve you better:"""
                 provider=provider,
                 api_key=api_key,
                 base_url=base_url,
+                model=model,
             )
             await self._broadcast({
                 "type": "model_connection_test",
@@ -4222,6 +4237,45 @@ A quick Q&A will now begin to understand your objectives to serve you better:"""
             await self._broadcast({
                 "type": "ollama_models_get",
                 "data": {"success": False, "models": [], "error": str(e)},
+            })
+
+    async def _handle_openrouter_models_get(
+        self,
+        base_url: Optional[str] = None,
+        force_refresh: bool = False,
+    ) -> None:
+        """Fetch the OpenRouter model catalog and broadcast it.
+
+        The catalog is public (no auth) and large (~300 entries). The helper
+        caches it in-process for 5 min; pass forceRefresh=True from the UI
+        to bypass the cache.
+        """
+        try:
+            from app.ui_layer.settings.openrouter_catalog import fetch_models
+            result = await asyncio.to_thread(
+                fetch_models, base_url, force_refresh=force_refresh
+            )
+            await self._broadcast({"type": "openrouter_models_get", "data": result})
+        except Exception as e:
+            await self._broadcast({
+                "type": "openrouter_models_get",
+                "data": {"success": False, "models": [], "error": str(e)},
+            })
+
+    async def _handle_openrouter_credits_get(
+        self,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> None:
+        """Fetch the OpenRouter account credit balance for the configured key."""
+        try:
+            from app.ui_layer.settings.openrouter_catalog import fetch_credits
+            result = await asyncio.to_thread(fetch_credits, api_key, base_url)
+            await self._broadcast({"type": "openrouter_credits_get", "data": result})
+        except Exception as e:
+            await self._broadcast({
+                "type": "openrouter_credits_get",
+                "data": {"success": False, "error": str(e)},
             })
 
     # ─────────────────────────────────────────────────────────────────────

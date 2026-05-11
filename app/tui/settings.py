@@ -22,6 +22,7 @@ PROVIDER_TO_SETTINGS_KEY = {
     "minimax": "minimax",
     "moonshot": "moonshot",
     "grok": "grok",
+    "openrouter": "openrouter",
 }
 
 
