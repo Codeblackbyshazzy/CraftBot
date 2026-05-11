@@ -20,7 +20,6 @@ PROVIDER_TO_SETTINGS_KEY = {
     "anthropic": "anthropic",
     "deepseek": "deepseek",
     "grok": "grok",
-    "openrouter": "openrouter",
 }
 
 
